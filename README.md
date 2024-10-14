@@ -60,6 +60,8 @@ This repository provides steps for setting up a 5G testbed using USRP devices wi
 
 ## Network Configuration 1: Two Separate Machines
 
+**Detailed steps will be added soon, the general gist is given below**
+
 1. **USRP 1:**
    - Connect to the host machine running srsUE.
 2. **USRP 2:**
@@ -71,4 +73,4 @@ This repository provides steps for setting up a 5G testbed using USRP devices wi
 
 ## Network Configuration 2: Split Architecture with COTS UEs
 
-1. **Will be added soon**
+**Will be added soon**
