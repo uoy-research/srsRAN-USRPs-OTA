@@ -1,0 +1,111 @@
+From 11421f9b4a06ac97a5f6b332a5a5391ff8b07ea3 Mon Sep 17 00:00:00 2001
+From: Piotr Gawlowicz <piotr@srs.io>
+Date: Mon, 15 Jul 2024 12:50:23 +0200
+Subject: [PATCH 1/2] nr,sync: fix casting of nof samples to discard, when
+ avg_delay_us is negative
+
+---
+ lib/src/phy/ue/ue_sync_nr.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/src/phy/ue/ue_sync_nr.c b/lib/src/phy/ue/ue_sync_nr.c
+index 1d6dc190ab..65c6e3c1f5 100644
+--- a/lib/src/phy/ue/ue_sync_nr.c
++++ b/lib/src/phy/ue/ue_sync_nr.c
+@@ -107,7 +107,7 @@ static void ue_sync_nr_apply_feedback(srsran_ue_sync_nr_t* q)
+ 
+   // Update number of samples
+   q->avg_delay_us          = q->feedback.delay_us;
+-  q->next_rf_sample_offset = (uint32_t)round((double)q->avg_delay_us * (q->srate_hz * 1e-6));
++  q->next_rf_sample_offset = (int32_t)round((double)q->avg_delay_us * (q->srate_hz * 1e-6));
+ 
+   // Integrate CFO
+   if (q->disable_cfo) {
+-- 
+2.34.1
+
+
+From a9b2e43166714831bd5abd3ab093ce32e7e5d9d2 Mon Sep 17 00:00:00 2001
+From: Piotr Gawlowicz <piotr@srs.io>
+Date: Mon, 15 Jul 2024 17:34:39 +0200
+Subject: [PATCH 2/2] nr,rrc: fix, apply t_offset only once after SIB1
+
+---
+ lib/include/srsran/common/phy_cfg_nr.h | 3 ++-
+ srsue/src/phy/phy_nr_sa.cc             | 4 +++-
+ srsue/src/stack/rrc_nr/rrc_nr.cc       | 9 +++++----
+ 3 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/lib/include/srsran/common/phy_cfg_nr.h b/lib/include/srsran/common/phy_cfg_nr.h
+index 637b0b1147..0c2368d00e 100644
+--- a/lib/include/srsran/common/phy_cfg_nr.h
++++ b/lib/include/srsran/common/phy_cfg_nr.h
+@@ -46,7 +46,8 @@ struct phy_cfg_nr_t {
+   srsran_csi_hl_cfg_t       csi      = {};
+   srsran_carrier_nr_t       carrier  = {};
+   ssb_cfg_t                 ssb      = {};
+-  uint32_t                  t_offset = 0; ///< n-TimingAdvanceOffset
++  bool                      apply_t_offset = false;
++  uint32_t                  t_offset       = 0; ///< n-TimingAdvanceOffset
+ 
+   phy_cfg_nr_t() {}
+ 
+diff --git a/srsue/src/phy/phy_nr_sa.cc b/srsue/src/phy/phy_nr_sa.cc
+index df7334339b..1a61c9f0ed 100644
+--- a/srsue/src/phy/phy_nr_sa.cc
++++ b/srsue/src/phy/phy_nr_sa.cc
+@@ -259,7 +259,9 @@ bool phy_nr_sa::set_config(const srsran::phy_cfg_nr_t& cfg)
+     bool ret = workers.set_config(config_nr);
+ 
+     // Pass n_ta_offset to sync
+-    sync.add_ta_offset(config_nr.t_offset);
++    if (config_nr.apply_t_offset) {
++      sync.add_ta_offset(config_nr.t_offset);
++    }
+ 
+     // Notify PHY config completion
+     if (stack != nullptr) {
+diff --git a/srsue/src/stack/rrc_nr/rrc_nr.cc b/srsue/src/stack/rrc_nr/rrc_nr.cc
+index d6f4c5fbca..c873a6f590 100644
+--- a/srsue/src/stack/rrc_nr/rrc_nr.cc
++++ b/srsue/src/stack/rrc_nr/rrc_nr.cc
+@@ -513,11 +513,12 @@ void rrc_nr::handle_sib1(const sib1_s& sib1)
+   }
+ 
+   phy_cfg_state = PHY_CFG_STATE_SA_SIB_CFG;
++  phy_cfg.apply_t_offset = true; // apply t_offset only once, after SIB1, otherwise RAR TA will be cleared.
+   if (not phy->set_config(phy_cfg)) {
+     logger.warning("Could not set phy config.");
+     return;
+   }
+-
++  phy_cfg.apply_t_offset = false; // do not apply t_offset after RAR
+   // Notify cell selector of successful SIB1 reception
+   cell_selector.trigger(true);
+ }
+@@ -1932,11 +1933,11 @@ bool rrc_nr::update_sp_cell_cfg(const sp_cell_cfg_s& sp_cell_cfg)
+     srsran::phy_cfg_nr_t current_phycfg = phy_cfg;
+     current_phycfg.csi                  = prev_csi;
+     phy_cfg_state                       = PHY_CFG_STATE_NSA_APPLY_SP_CELL;
+-    phy->set_config(current_phycfg);
++    phy->set_config(current_phycfg); // t_offset is not applied
+   } else {
+     // apply full config immediately
+     phy_cfg_state = PHY_CFG_STATE_SA_FULL_CFG;
+-    phy->set_config(phy_cfg);
++    phy->set_config(phy_cfg); // t_offset is not applied
+   }
+ 
+   return true;
+@@ -2303,7 +2304,7 @@ void rrc_nr::ra_completed()
+   if (rrc_eutra) {
+     logger.debug("Applying remaining CSI configuration.");
+     phy_cfg_state = PHY_CFG_STATE_NSA_RA_COMPLETED;
+-    phy->set_config(phy_cfg);
++    phy->set_config(phy_cfg); // t_offset is not applied
+   } else {
+     phy_cfg_state = PHY_CFG_STATE_NONE;
+   }
+-- 
+2.34.1
+
